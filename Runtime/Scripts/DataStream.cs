@@ -248,13 +248,20 @@ namespace LiveKit
         public sealed class ReadIncrementalInstruction : StreamYieldInstruction
         {
             private readonly FfiHandle _handle;
-            private string _latestChunk;
+            private Queue<string> _chunkQueue = new Queue<string>();
 
             internal ReadIncrementalInstruction(FfiHandle readerHandle)
             {
                 _handle = readerHandle;
                 FfiClient.Instance.TextStreamReaderEventReceived += OnStreamEvent;
             }
+
+            public override bool keepWaiting => _chunkQueue.Count == 0 && !IsCurrentReadDone && !IsEos;
+
+            /// <summary>
+            /// True if the stream has ended and there are no more chunks in the queue to read.
+            /// </summary>
+            public bool IsFullyConsumed => _chunkQueue.Count == 0 && IsEos;
 
             private void OnStreamEvent(TextStreamReaderEvent e)
             {
@@ -264,7 +271,8 @@ namespace LiveKit
                 switch (e.DetailCase)
                 {
                     case TextStreamReaderEvent.DetailOneofCase.ChunkReceived:
-                        _latestChunk = e.ChunkReceived.Content;
+                        // This is on main thread, no lock is needed.
+                        _chunkQueue.Enqueue(e.ChunkReceived.Content);
                         IsCurrentReadDone = true;
                         break;
                     case TextStreamReaderEvent.DetailOneofCase.Eos:
@@ -283,7 +291,7 @@ namespace LiveKit
                 get
                 {
                     if (Error != null) throw Error;
-                    return _latestChunk;
+                    return _chunkQueue.Dequeue();
                 }
             }
 
